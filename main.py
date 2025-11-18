@@ -1,113 +1,83 @@
-"""
-AmbedkarGPT-Intern-Task
------------------------
-
-Simple command-line Q&A system using:
-
-- LangChain (for RAG orchestration)
-- Chroma (local vector store)
-- HuggingFaceEmbeddings (sentence-transformers/all-MiniLM-L6-v2)
-- Ollama LLM with mistral 7B
-
-The system:
-1. Loads 'speech.txt'
-2. Splits it into chunks
-3. Creates embeddings and stores them in a local Chroma vector store
-4. Retrieves relevant chunks based on user questions
-5. Uses an LLM (Ollama + Mistral) to answer questions from that context
-
-Run:
-    python main.py
-"""
-
 import os
+# LangChain Community imports (Loaders, Stores, LLMs)
 from langchain_community.document_loaders import TextLoader
 from langchain_text_splitters import CharacterTextSplitter
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_community.vectorstores import Chroma
 from langchain_community.llms import Ollama
-from langchain.chains import RetrievalQA
+
+# Modern LangChain imports (Chains & Prompts)
+from langchain.chains import create_retrieval_chain
+from langchain.chains.combine_documents import create_stuff_documents_chain
+from langchain_core.prompts import ChatPromptTemplate
 
 
 SPEECH_FILE = "speech.txt"
 
 
 def load_documents(file_path: str = SPEECH_FILE):
-    """
-    Load the speech from a plain text file as LangChain Documents.
-    """
     if not os.path.exists(file_path):
         raise FileNotFoundError(
             f"Could not find '{file_path}'. Make sure it exists in the project root."
         )
-
-    # TextLoader loads the text file and wraps it into a list of Document objects
     loader = TextLoader(file_path, encoding="utf-8")
     documents = loader.load()
     return documents
 
 
 def split_documents(documents):
-    """
-    Split the document into manageable chunks.
-    We use CharacterTextSplitter which splits by characters with some overlap.
-    """
-    # You can tune chunk_size and chunk_overlap as needed
     text_splitter = CharacterTextSplitter(
         separator="\n",
         chunk_size=500,
         chunk_overlap=100,
     )
-
     chunks = text_splitter.split_documents(documents)
     return chunks
 
 
 def create_vector_store(chunks):
-    """
-    Create a Chroma vector store using HuggingFace embeddings.
-    This is an in-memory store for this simple prototype.
-    """
-    # Use sentence-transformers/all-MiniLM-L6-v2 as required
+    # Suppress the deprecation warning in logs if you prefer, 
+    # but this works fine for now.
     embeddings = HuggingFaceEmbeddings(
         model_name="sentence-transformers/all-MiniLM-L6-v2"
     )
-
-    # Create the Chroma vector store from documents
     vector_store = Chroma.from_documents(chunks, embeddings)
     return vector_store
 
 
 def create_qa_chain(vector_store):
     """
-    Create a RetrievalQA chain that:
-    - Uses the Chroma vector store as retriever
-    - Uses Ollama (Mistral) as the LLM to generate answers
+    Modern Chain Construction:
+    1. Define Prompt
+    2. Define Document Chain (LLM + Prompt)
+    3. Define Retrieval Chain (Retriever + Document Chain)
     """
-    # This assumes you have Ollama running locally and have pulled the 'mistral' model:
-    #   ollama pull mistral
     llm = Ollama(model="mistral")
 
-    # RetrievalQA chain:
-    # - chain_type="stuff" simply stuffs retrieved docs into the prompt.
-    qa = RetrievalQA.from_chain_type(
-        llm=llm,
-        retriever=vector_store.as_retriever(),
-        return_source_documents=True,  # helpful for debugging / transparency
-        chain_type="stuff",
-    )
-    return qa
+    # 1. Create a prompt template
+    # The variable "{context}" is where the retrieved docs go.
+    # The variable "{input}" is the user's question.
+    prompt = ChatPromptTemplate.from_template("""
+    Answer the user's question based on the context below.
+    If you don't know the answer, just say you don't know.
+
+    <context>
+    {context}
+    </context>
+
+    Question: {input}
+    """)
+
+    # 2. Create the document chain (stuffs docs into the context variable)
+    document_chain = create_stuff_documents_chain(llm, prompt)
+
+    # 3. Create the final retrieval chain
+    retrieval_chain = create_retrieval_chain(vector_store.as_retriever(), document_chain)
+
+    return retrieval_chain
 
 
 def run_cli(qa_chain):
-    """
-    Simple command-line loop that:
-    - Takes user questions
-    - Runs them through the RetrievalQA chain
-    - Prints the answers
-
-    Type 'exit', 'quit', or 'q' to terminate.
-    """
     print("=" * 70)
     print("AmbedkarGPT - Q&A on 'Annihilation of Caste' Excerpt")
     print("Ask a question about the speech. Type 'exit' to quit.")
@@ -120,24 +90,28 @@ def run_cli(qa_chain):
             break
 
         if not query:
-            print("Assistant: Please type a question or 'exit' to quit.")
             continue
 
         try:
-            # The RetrievalQA chain expects a dict with the key "query"
-            result = qa_chain({"query": query})
+            # --- CRITICAL FIX HERE ---
+            # Modern chains use .invoke()
+            # The input key defined in our prompt is "input"
+            result = qa_chain.invoke({"input": query})
 
-            answer = result.get("result", "")
-            sources = result.get("source_documents", [])
+            # The result dict contains:
+            # "input": user query
+            # "context": list of source documents
+            # "answer": the LLM's response
+            answer = result.get("answer", "")
+            sources = result.get("context", [])
 
             print("\nAssistant:")
             print(answer)
 
-            # (Optional) Show which chunks were used as context
             print("\n[Context Chunks Used:]")
             for i, doc in enumerate(sources, start=1):
                 print(f"\n--- Chunk {i} ---")
-                print(doc.page_content)
+                print(doc.page_content[:200] + "...") # Truncated for readability
 
         except Exception as e:
             print(f"\n[Error] Something went wrong: {e}")
@@ -145,14 +119,6 @@ def run_cli(qa_chain):
 
 
 def main():
-    """
-    Main entry point:
-    1. Load documents from speech.txt
-    2. Split them into chunks
-    3. Build a Chroma vector store
-    4. Create the RetrievalQA chain with Ollama (Mistral)
-    5. Start the CLI loop
-    """
     print("Loading documents...")
     docs = load_documents()
 
@@ -160,7 +126,7 @@ def main():
     chunks = split_documents(docs)
     print(f"Number of chunks created: {len(chunks)}")
 
-    print("Creating vector store (Chroma) with HuggingFace embeddings...")
+    print("Creating vector store (Chroma)...")
     vector_store = create_vector_store(chunks)
 
     print("Creating RetrievalQA chain with Ollama (Mistral)...")
