@@ -41,3 +41,38 @@ AmbedkarGPT-Intern-Task/
 ├── requirements.txt  # Python dependencies
 ├── README.md         # This file
 └── speech.txt        # Provided text (Ambedkar excerpt)
+
+## Setup & Installation
+
+### 1. Clone the Repository
+```bash
+git clone (https://github.com/aishna05/AmbedkarGPT-Intern-Task.git)
+cd AmbedkarGPT-Intern-Task
+2. Set up Virtual Environment
+Bash
+
+# Windows
+python -m venv venv
+.\venv\Scripts\activate
+
+# Mac/Linux
+python3 -m venv venv
+source venv/bin/activate
+
+3. Install Dependencies
+
+pip install -r requirements.txt
+4. Setup Ollama (LLM)
+This project uses Ollama to run Mistral 7B locally.
+
+Download Ollama from ollama.ai.
+
+Pull the model:
+
+ollama pull mistral
+Ensure the Ollama app is running in the background.
+
+How to Run
+Simply execute the main script:
+
+python main.py

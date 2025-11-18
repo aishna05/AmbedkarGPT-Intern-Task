@@ -1,66 +1,62 @@
 import os
-# LangChain Community imports (Loaders, Stores, LLMs)
+import sys
+
+# 1. Loaders and Splitters
 from langchain_community.document_loaders import TextLoader
 from langchain_text_splitters import CharacterTextSplitter
+
+# 2. Embeddings and Vector Store
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_community.vectorstores import Chroma
-from langchain_community.llms import Ollama
 
-# Modern LangChain imports (Chains & Prompts)
+# 3. LLM and Chains
+from langchain_community.llms import Ollama
 from langchain.chains import create_retrieval_chain
 from langchain.chains.combine_documents import create_stuff_documents_chain
 from langchain_core.prompts import ChatPromptTemplate
 
-
+# Configuration
 SPEECH_FILE = "speech.txt"
+MODEL_NAME = "mistral"  # The LLM model to use in Ollama
 
+def main():
+    print("--- Kalpit Pvt Ltd AI Intern Task: AmbedkarGPT ---")
+    
+    # Step 1: Load the Document
+    if not os.path.exists(SPEECH_FILE):
+        print(f"Error: '{SPEECH_FILE}' not found. Please create it first.")
+        sys.exit(1)
+        
+    print(f"1. Loading {SPEECH_FILE}...")
+    loader = TextLoader(SPEECH_FILE, encoding="utf-8")
+    docs = loader.load()
 
-def load_documents(file_path: str = SPEECH_FILE):
-    if not os.path.exists(file_path):
-        raise FileNotFoundError(
-            f"Could not find '{file_path}'. Make sure it exists in the project root."
-        )
-    loader = TextLoader(file_path, encoding="utf-8")
-    documents = loader.load()
-    return documents
-
-
-def split_documents(documents):
+    # Step 2: Split Text
+    print("2. Splitting text into chunks...")
     text_splitter = CharacterTextSplitter(
         separator="\n",
         chunk_size=500,
-        chunk_overlap=100,
+        chunk_overlap=100
     )
-    chunks = text_splitter.split_documents(documents)
-    return chunks
+    chunks = text_splitter.split_documents(docs)
+    print(f"   > Created {len(chunks)} chunks.")
 
-
-def create_vector_store(chunks):
-    # Suppress the deprecation warning in logs if you prefer, 
-    # but this works fine for now.
-    embeddings = HuggingFaceEmbeddings(
-        model_name="sentence-transformers/all-MiniLM-L6-v2"
-    )
+    # Step 3: Create Vector Store (Chroma)
+    print("3. Creating Vector Store and Embeddings...")
+    # Using all-MiniLM-L6-v2 as requested (runs locally, no API key)
+    embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
+    
+    # Create Chroma vector store in memory
     vector_store = Chroma.from_documents(chunks, embeddings)
-    return vector_store
 
+    # Step 4: Setup LLM and RAG Chain
+    print(f"4. Initializing Ollama with model '{MODEL_NAME}'...")
+    llm = Ollama(model=MODEL_NAME)
 
-def create_qa_chain(vector_store):
-    """
-    Modern Chain Construction:
-    1. Define Prompt
-    2. Define Document Chain (LLM + Prompt)
-    3. Define Retrieval Chain (Retriever + Document Chain)
-    """
-    llm = Ollama(model="mistral")
-
-    # 1. Create a prompt template
-    # The variable "{context}" is where the retrieved docs go.
-    # The variable "{input}" is the user's question.
+    # Create the prompt template
     prompt = ChatPromptTemplate.from_template("""
-    Answer the user's question based on the context below.
-    If you don't know the answer, just say you don't know.
-
+    Answer the following question based ONLY on the provided context.
+    
     <context>
     {context}
     </context>
@@ -68,72 +64,39 @@ def create_qa_chain(vector_store):
     Question: {input}
     """)
 
-    # 2. Create the document chain (stuffs docs into the context variable)
+    # Create the chain: Document Chain (LLM+Prompt) -> Retrieval Chain (VectorStore+DocChain)
     document_chain = create_stuff_documents_chain(llm, prompt)
-
-    # 3. Create the final retrieval chain
     retrieval_chain = create_retrieval_chain(vector_store.as_retriever(), document_chain)
 
-    return retrieval_chain
-
-
-def run_cli(qa_chain):
-    print("=" * 70)
-    print("AmbedkarGPT - Q&A on 'Annihilation of Caste' Excerpt")
-    print("Ask a question about the speech. Type 'exit' to quit.")
-    print("=" * 70)
-
+    # Step 5: Interactive Loop
+    print("\n✅ System Ready! Type 'exit' to quit.")
+    
     while True:
-        query = input("\nYou: ").strip()
-        if query.lower() in {"exit", "quit", "q"}:
-            print("Assistant: Goodbye! 👋")
+        query = input("\nUser: ").strip()
+        if query.lower() in ["exit", "quit", "q"]:
+            print("Goodbye!")
             break
-
         if not query:
             continue
 
+        print("Thinking...")
         try:
-            # --- CRITICAL FIX HERE ---
-            # Modern chains use .invoke()
-            # The input key defined in our prompt is "input"
-            result = qa_chain.invoke({"input": query})
-
-            # The result dict contains:
-            # "input": user query
-            # "context": list of source documents
-            # "answer": the LLM's response
-            answer = result.get("answer", "")
-            sources = result.get("context", [])
-
-            print("\nAssistant:")
-            print(answer)
-
-            print("\n[Context Chunks Used:]")
-            for i, doc in enumerate(sources, start=1):
-                print(f"\n--- Chunk {i} ---")
-                print(doc.page_content[:200] + "...") # Truncated for readability
+            # Invoke the chain
+            response = retrieval_chain.invoke({"input": query})
+            
+            # Extract answer
+            answer = response.get("answer", "No answer generated.")
+            
+            print(f"\nAssistant: {answer}")
+            
+            # Optional: Print source chunks for debugging/grading transparency
+            # print("\n[Source Context used]")
+            # for i, doc in enumerate(response.get("context", [])):
+            #     print(f"Source {i+1}: {doc.page_content[:100]}...")
 
         except Exception as e:
-            print(f"\n[Error] Something went wrong: {e}")
-            print("Make sure Ollama is running and the 'mistral' model is available.")
-
-
-def main():
-    print("Loading documents...")
-    docs = load_documents()
-
-    print("Splitting documents into chunks...")
-    chunks = split_documents(docs)
-    print(f"Number of chunks created: {len(chunks)}")
-
-    print("Creating vector store (Chroma)...")
-    vector_store = create_vector_store(chunks)
-
-    print("Creating RetrievalQA chain with Ollama (Mistral)...")
-    qa_chain = create_qa_chain(vector_store)
-
-    run_cli(qa_chain)
-
+            print(f"\n❌ Error: {e}")
+            print(f"Tip: Ensure Ollama is running and you have pulled the model: 'ollama pull {MODEL_NAME}'")
 
 if __name__ == "__main__":
     main()
